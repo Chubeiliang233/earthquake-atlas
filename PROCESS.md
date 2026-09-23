@@ -9,11 +9,13 @@ source and Matplotlib with NumPy to turn the saved data into the final picture.
 
 ## Kept
 
-I kept the idea of using earthquake density as the height of a wire surface and
-showing the same density again as a lower dot layer. This version gives the lines a
-clear role: they are the main visual form, while their height is still calculated
-from real event counts. I also kept a small amount of fluorescent green because it
-creates one focal point without competing with the white wire structure.
+I kept the idea of using earthquake density as the height of a wire surface, but I
+gave the two layers different data. The upper wire field now uses shallow events
+below 70 kilometres, while the lower dot field uses deeper events. This gives the
+separation a reason while keeping the lines as the main visual form. I also kept a
+small amount of fluorescent green to connect the strongest deep event with the same
+longitude and latitude on the upper field. The final spacing and softer peaks came
+from comparing several generated versions rather than accepting the first result.
 
 ## Rejected
 
@@ -22,6 +24,8 @@ equal regional panels and a bar chart. Its parts had almost equal visual weight,
 the composition felt flat and busy. The second added coastlines and differently
 sized map panels, but it still looked like several charts placed on one poster. I
 also rejected an early 3D test with a complete crossed wire grid and raw epicentre
-points underneath. Too many intersecting lines and dots formed a tangled mass. The
-final version reduces the cross-lines and uses a regular sampled dot field, which
-makes the two layers easier to read.
+points underneath. Too many intersecting lines and dots formed a tangled mass. A
+later version repeated the same density in both layers; it looked more controlled,
+but the repetition had no useful meaning. The final version reduces the cross-lines,
+separates shallow and deep data, and uses a regular sampled dot field so the two
+layers are easier to read.

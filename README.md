@@ -23,14 +23,16 @@ access.
 
 ## What the picture shows
 
-The picture focuses on 422 events within the western Pacific crop. Earthquakes are
-counted on a geographic grid and smoothed into a density field. In the upper layer,
-local density becomes the height of the white wire surface. The lower layer samples
-the same field as a regular dot matrix, with larger dots in denser areas. The gap
-between layers is only a visual device, and the raised surface is not real terrain.
-The transformation hides exact coastlines, individual event times, depths and most
-magnitudes. It also removes earthquakes outside the selected region and softens
-small local differences through smoothing.
+The picture focuses on 422 events within the western Pacific crop and divides them
+at a depth of 70 kilometres. The upper wire surface is made from 301 shallow events;
+its height shows their smoothed local count. The lower dot field is made from 121
+deep events, with larger dots where more deep earthquakes occur. The fluorescent
+green open circle marks the strongest event in the crop (magnitude 6.5 at a depth
+of 372 kilometres), while the filled point projects its longitude and latitude onto
+the upper field. The gap between layers is a visual device rather than a true depth
+scale, and the raised surface is not terrain. This transformation hides coastlines,
+individual times and most magnitudes. It also omits events outside the selected
+region and softens small local differences through smoothing.
 
 ## Run it
 
