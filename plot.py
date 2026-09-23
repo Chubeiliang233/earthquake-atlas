@@ -3,11 +3,7 @@
 # dependencies = ["matplotlib", "numpy"]
 # ///
 
-"""读取本地 USGS 地震数据，生成地图拼贴海报。
-
-运行方法：uv run plot.py
-生成文件：out/earthquake-atlas.png
-"""
+"""从本地 GeoJSON 绘制地震地图拼贴。运行：uv run plot.py。"""
 
 import datetime as dt
 import json
@@ -15,243 +11,207 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.patches import Rectangle
+from matplotlib.lines import Line2D
+from matplotlib.patches import Polygon, Rectangle
 
 HERE = Path(__file__).parent
-DATA = HERE / "data" / "usgs-earthquakes-2.5-month.geojson"
-OUT = HERE / "out"
-PICTURE = "earthquake-atlas.png"
+QUAKES = HERE / "data" / "usgs-earthquakes-2.5-month.geojson"
+LAND = HERE / "data" / "ne_110m_land.geojson"
+OUT = HERE / "out" / "earthquake-atlas.png"
 
-BACKGROUND = "#0d0f0e"
-PANEL = "#171a18"
-GRID = "#343b36"
-TEXT = "#e3e8df"
-MUTED = "#8b958b"
-SIGNAL = "#a6ff18"
-DENSITY_COLOURS = LinearSegmentedColormap.from_list(
-    "seismic_density", [PANEL, "#252b27", "#59615a", "#c3c8bf"]
-)
-
-# 三个放大区域使用相同的经纬度比例，避免把地图拉伸。
-REGIONS = [
-    ("NORTH PACIFIC", (-180, -119, 30, 80)),
-    ("WEST PACIFIC", (115, 163, 8, 47)),
-    ("SOUTH AMERICA", (-87, -39, -55, -16)),
-]
+BLACK = "#101210"
+PAPER = "#e2e3dd"
+SILVER = "#a3aaa3"
+MID = "#555c56"
+SIGNAL = "#b0ff2a"
 
 
-def load_earthquakes(path):
-    """从保存的 GeoJSON 中取出经纬度、深度、震级和日期。"""
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def load_earthquakes():
+    """每条记录保留经纬度、震级、深度和 UTC 日期。"""
+    raw = json.loads(QUAKES.read_text(encoding="utf-8"))
     quakes = []
     for feature in raw["features"]:
-        magnitude = feature["properties"]["mag"]
         coordinates = feature["geometry"]["coordinates"]
-        if magnitude is None or not coordinates or len(coordinates) < 3:
+        magnitude = feature["properties"]["mag"]
+        if magnitude is None or len(coordinates) < 3:
             continue
         longitude, latitude, depth = coordinates[:3]
-        occurred = dt.datetime.fromtimestamp(
+        date = dt.datetime.fromtimestamp(
             feature["properties"]["time"] / 1000, dt.timezone.utc
-        )
-        quakes.append({
-            "longitude": longitude,
-            "latitude": latitude,
-            "depth": depth,
-            "magnitude": magnitude,
-            "date": occurred.date(),
-        })
+        ).date()
+        quakes.append((longitude, latitude, depth, magnitude, date))
     return quakes
 
 
-def dot_size(magnitude):
-    """震级越高，地震点越大。"""
-    return 3 * 2.2 ** (magnitude - 2.5)
+def load_land():
+    """从保存的 Natural Earth 文件读取陆地多边形。"""
+    raw = json.loads(LAND.read_text(encoding="utf-8"))
+    rings = []
+    for feature in raw["features"]:
+        geometry = feature["geometry"]
+        polygons = (
+            [geometry["coordinates"]]
+            if geometry["type"] == "Polygon"
+            else geometry["coordinates"]
+        )
+        for polygon in polygons:
+            rings.append(polygon[0])  # 只绘制海岸线，不切出内陆湖泊。
+    return rings
 
 
-def depth_gray(depth):
-    """浅层地震较亮，深层地震较暗。"""
-    shade = 0.78 - min(max(depth, 0), 400) / 400 * 0.5
-    return (shade, shade, shade)
-
-
-def seismic_density(quakes):
-    """把地震放进一度宽的网格，再稍微平滑，供灰度纹理和细线使用。"""
+def density_field(quakes):
+    """按经纬度汇总地震；线条表示平滑后的事件密度。"""
     field = np.zeros((180, 360), dtype=float)
-    for quake in quakes:
-        x = min(359, max(0, int(quake["longitude"] + 180)))
-        y = min(179, max(0, int(quake["latitude"] + 90)))
-        field[y, x] += max(quake["magnitude"] - 2, 0.5) ** 2
-
-    for _ in range(10):
-        up = np.vstack((field[:1], field[:-1]))
-        down = np.vstack((field[1:], field[-1:]))
-        field = (
-            4 * field
-            + np.roll(field, 1, axis=1)
-            + np.roll(field, -1, axis=1)
-            + up + down
-        ) / 8
-    return np.log1p(field)
+    for longitude, latitude, _depth, magnitude, _date in quakes:
+        x = min(359, max(0, int(longitude + 180)))
+        y = min(179, max(0, int(latitude + 90)))
+        field[y, x] += max(magnitude - 2.4, 0.1)
+    for _ in range(7):
+        above = np.vstack((field[:1], field[:-1]))
+        below = np.vstack((field[1:], field[-1:]))
+        field = (4 * field + np.roll(field, 1, 1)
+                 + np.roll(field, -1, 1) + above + below) / 8
+    return field
 
 
-def draw_map(ax, quakes, density, bounds, show_coordinates=False):
-    """用同一组真实数据绘制全球地图或局部放大图。"""
+def draw_map(ax, quakes, land, density, bounds, palette, grid_step):
+    """用同一份数据制作不同裁切和明暗的地图。"""
     west, east, south, north = bounds
-    ax.set_facecolor(PANEL)
-    upper = max(float(np.quantile(density, 0.995)), 0.01)
-    ax.imshow(
-        density, extent=(-180, 180, -90, 90), origin="lower",
-        cmap=DENSITY_COLOURS, vmin=0, vmax=upper,
-        interpolation="nearest", zorder=1,
-    )
+    ocean, land_color, coast, points, contour = palette
+    ax.set_facecolor(ocean)
 
-    # 这些细线表示地震活动密度相同的位置，不是地形等高线。
-    values = density[density > 0.02]
+    # 经纬网只作极细的定位辅助线，不与数据点争夺注意力。
+    for x in range(-180, 181, grid_step):
+        ax.plot([x, x], [south, north], color=coast, alpha=0.17,
+                linewidth=0.35, zorder=1)
+    for y in range(-90, 91, grid_step):
+        ax.plot([west, east], [y, y], color=coast, alpha=0.17,
+                linewidth=0.35, zorder=1)
+
+    for ring in land:
+        ax.add_patch(Polygon(
+            ring, closed=True, facecolor=land_color, edgecolor=coast,
+            linewidth=0.33, zorder=2,
+        ))
+
+    values = density[density > 0.03]
     if len(values):
-        levels = np.unique(np.quantile(values, [0.55, 0.72, 0.86, 0.95]))
-        x = np.linspace(-179.5, 179.5, density.shape[1])
-        y = np.linspace(-89.5, 89.5, density.shape[0])
+        levels = np.unique(np.quantile(values, [0.52, 0.67, 0.80, 0.91]))
         ax.contour(
-            x, y, density, levels=levels,
-            colors="#d0d7cc", linewidths=0.42, alpha=0.47, zorder=2,
+            np.linspace(-179.5, 179.5, 360),
+            np.linspace(-89.5, 89.5, 180), density,
+            levels=levels, colors=contour, linewidths=0.43,
+            alpha=0.59, zorder=3,
         )
 
-    visible = [
-        q for q in quakes
-        if west <= q["longitude"] <= east and south <= q["latitude"] <= north
-    ]
+    visible = [q for q in quakes
+               if west <= q[0] <= east and south <= q[1] <= north]
     ax.scatter(
-        [q["longitude"] for q in visible],
-        [q["latitude"] for q in visible],
-        s=[dot_size(q["magnitude"]) for q in visible],
-        c=[depth_gray(q["depth"]) for q in visible],
-        alpha=0.67, linewidths=0, zorder=3,
+        [q[0] for q in visible], [q[1] for q in visible],
+        s=[1.5 + max(q[3] - 2.5, 0) ** 2 * 1.3 for q in visible],
+        c=points, alpha=0.72, linewidths=0, zorder=4,
     )
     ax.set_xlim(west, east)
     ax.set_ylim(south, north)
-    ax.set_aspect("equal")
-    ax.grid(color=GRID, linewidth=0.5, alpha=0.85)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xticks([])
+    ax.set_yticks([])
     for spine in ax.spines.values():
-        spine.set_color("#777f77")
-        spine.set_linewidth(0.65)
-
-    if show_coordinates:
-        ax.set_xticks(range(-180, 181, 60))
-        ax.set_yticks(range(-90, 91, 30))
-        ax.tick_params(colors=MUTED, labelsize=7, length=0)
-        ax.set_xlabel("LONGITUDE  /  DEGREES", color=MUTED, fontsize=7, labelpad=9)
-        ax.set_ylabel("LATITUDE  /  DEGREES", color=MUTED, fontsize=7, labelpad=9)
-    else:
-        ax.set_xticks([])
-        ax.set_yticks([])
+        spine.set_visible(False)
     return len(visible)
 
 
+def label(fig, x, y, message, size=8, color=SILVER, weight="normal", **kwargs):
+    fig.text(x, y, message, fontsize=size, color=color, weight=weight, **kwargs)
+
+
 def main():
-    quakes = load_earthquakes(DATA)
-    if not quakes:
-        raise SystemExit("No earthquakes found in the saved data file.")
-    first = min(q["date"] for q in quakes)
-    last = max(q["date"] for q in quakes)
-    strongest = sorted(quakes, key=lambda q: q["magnitude"], reverse=True)[:8]
-    density = seismic_density(quakes)
-    print(f"{len(quakes)} earthquakes, {first} to {last} (UTC)")
+    quakes = load_earthquakes()
+    land = load_land()
+    density = density_field(quakes)
+    first = min(q[4] for q in quakes)
+    last = max(q[4] for q in quakes)
+    strongest = sorted(quakes, key=lambda q: q[3], reverse=True)[:5]
 
-    fig = plt.figure(figsize=(12, 16), facecolor=BACKGROUND)
-    fig.text(0.08, 0.955, "FIELD RECORD  /  01", color=SIGNAL, fontsize=10, weight="bold")
-    fig.text(0.08, 0.913, "EARTHQUAKE ATLAS", color=TEXT, fontsize=29, weight="bold")
-    fig.text(
-        0.08, 0.886,
-        f"USGS  /  M2.5+  /  {first} — {last} UTC  /  {len(quakes):,} EVENTS",
-        color=MUTED, fontsize=9,
-    )
-    fig.text(0.08, 0.835, "01 / GLOBAL SEISMIC FIELD", color=TEXT, fontsize=9)
-    fig.text(0.92, 0.835, "180° W  —  180° E", color=MUTED, fontsize=8, ha="right")
+    fig = plt.figure(figsize=(12, 15), facecolor=BLACK)
+    fig.patches.append(Rectangle(
+        (0.055, 0.864), 0.575, 0.112, transform=fig.transFigure,
+        facecolor=PAPER, edgecolor="none", zorder=1,
+    ))
+    fig.patches.append(Rectangle(
+        (0.055, 0.864), 0.008, 0.112, transform=fig.transFigure,
+        facecolor=SIGNAL, edgecolor="none", zorder=2,
+    ))
+    label(fig, 0.078, 0.952, "SEISMIC / FIELD RECORD 01", 8, BLACK, "bold")
+    label(fig, 0.078, 0.898, "EARTHQUAKE ATLAS", 27, BLACK, "bold")
+    label(fig, 0.672, 0.945, "USGS  /  M 2.5+", 10, PAPER, "bold")
+    label(fig, 0.672, 0.916, f"{first} — {last}", 8, SILVER)
+    label(fig, 0.672, 0.891, "PAST-MONTH GLOBAL RECORD  /  UTC", 7, SILVER)
+    fig.add_artist(Line2D([0.055, 0.945], [0.846, 0.846],
+                          transform=fig.transFigure, color=MID, linewidth=0.6))
 
-    global_ax = fig.add_axes([0.08, 0.495, 0.84, 0.315])
-    draw_map(global_ax, quakes, density, (-180, 180, -90, 90), show_coordinates=True)
-    for number, (_, (west, east, south, north)) in enumerate(REGIONS, start=1):
+    label(fig, 0.055, 0.829, "01   /   GLOBAL DISTRIBUTION", 8, PAPER, "bold")
+    label(fig, 0.945, 0.829, "LONGITUDE  −180° TO +180°", 7, SILVER,
+          ha="right")
+    global_ax = fig.add_axes([0.055, 0.508, 0.89, 0.317])
+    dark = ("#171a18", "#373d38", "#8b948b", PAPER, "#d8e0d6")
+    draw_map(global_ax, quakes, land, density,
+             (-180, 180, -80, 80), dark, 20)
+    for quake in strongest:
+        global_ax.scatter(quake[0], quake[1], s=51, facecolors="none",
+                          edgecolors=SIGNAL, linewidths=0.9, zorder=6)
+
+    # 三个裁切区在总图上留下极细的定位框。
+    windows = [
+        ("02", "WEST PACIFIC", (90, 177, -10, 44),
+         [0.055, 0.188, 0.575, 0.285],
+         (PAPER, "#929c92", "#464f48", BLACK, BLACK), 10),
+        ("03", "ANDEAN EDGE", (-89, -28, -49, -15),
+         [0.650, 0.340, 0.295, 0.133],
+         ("#444a45", "#bfc5bc", "#222721", BLACK, BLACK), 10),
+        ("04", "NORTH PACIFIC", (-180, -105, 25, 67),
+         [0.650, 0.188, 0.295, 0.133],
+         ("#1b201c", "#4b544c", "#9da89b", PAPER, PAPER), 10),
+    ]
+    for number, name, bounds, position, palette, grid_step in windows:
+        west, east, south, north = bounds
         global_ax.add_patch(Rectangle(
             (west, south), east - west, north - south,
-            fill=False, edgecolor=TEXT, linewidth=0.65,
-            linestyle=(0, (3, 3)), alpha=0.6, zorder=3.5,
+            fill=False, edgecolor=PAPER, linestyle=(0, (2, 3)),
+            linewidth=0.55, alpha=0.58, zorder=5,
         ))
-        global_ax.text(
-            west + 2, north - 3, f"{number:02}", color=TEXT,
-            fontsize=6, va="top", zorder=4,
-        )
-    for number, quake in enumerate(strongest, start=1):
-        global_ax.scatter(
-            quake["longitude"], quake["latitude"],
-            s=dot_size(quake["magnitude"]) * 2,
-            facecolors="none", edgecolors=SIGNAL,
-            linewidths=1.1, zorder=4,
-        )
-        global_ax.annotate(
-            f"{number:02}", (quake["longitude"], quake["latitude"]),
-            xytext=(7, 7), textcoords="offset points",
-            color=SIGNAL, fontsize=7, zorder=5,
-        )
+        panel = fig.add_axes(position)
+        count = draw_map(panel, quakes, land, density, bounds,
+                         palette, grid_step)
+        panel.text(0.025, 0.955, f"{number}  /  {name}",
+                   transform=panel.transAxes, va="top", fontsize=8,
+                   weight="bold", color=palette[3],
+                   bbox={"facecolor":palette[0], "edgecolor":"none",
+                         "alpha":0.88, "pad":4})
+        panel.text(0.025, 0.055, f"{count} RECORDED EVENTS",
+                   transform=panel.transAxes, fontsize=7,
+                   color=palette[3],
+                   bbox={"facecolor":palette[0], "edgecolor":"none",
+                         "alpha":0.88, "pad":3})
 
-    fig.text(0.08, 0.469, "02 / REGIONAL DETAILS", color=TEXT, fontsize=9)
-    positions = [0.08, 0.37, 0.66]
-    for index, ((name, bounds), left) in enumerate(zip(REGIONS, positions), start=1):
-        panel = fig.add_axes([left, 0.282, 0.26, 0.16])
-        count = draw_map(panel, quakes, density, bounds)
-        panel.text(
-            0.03, 0.94, f"{index:02}  {name}",
-            transform=panel.transAxes, va="top",
-            color=TEXT, fontsize=8, weight="bold",
-            bbox={"facecolor":BACKGROUND, "edgecolor":"none", "alpha":0.78, "pad":3},
-        )
-        panel.text(
-            0.03, 0.06, f"{count:03} EVENTS  /  DETAIL",
-            transform=panel.transAxes, va="bottom",
-            color=SIGNAL, fontsize=7,
-            bbox={"facecolor":BACKGROUND, "edgecolor":"none", "alpha":0.78, "pad":2},
-        )
+    label(fig, 0.055, 0.487, "A MONTH OF EARTH MOVEMENT, SEEN AT FOUR SCALES.",
+          8, SILVER)
+    label(fig, 0.055, 0.162, "USGS / EARTHQUAKE CATALOGUE", 8, PAPER, "bold")
+    fig.add_artist(Line2D([0.055, 0.945], [0.147, 0.147],
+                          transform=fig.transFigure, color=MID, linewidth=0.6))
 
-    fig.text(0.08, 0.251, "03 / EVENT FREQUENCY", color=TEXT, fontsize=9)
-    fig.text(0.92, 0.251, "UTC DAYS  /  FIRST & LAST MAY BE PARTIAL",
-             color=MUTED, fontsize=7, ha="right")
-    dates = [first + dt.timedelta(days=i) for i in range((last - first).days + 1)]
-    counts = {date: 0 for date in dates}
-    for quake in quakes:
-        counts[quake["date"]] += 1
-    time_ax = fig.add_axes([0.08, 0.113, 0.84, 0.115], facecolor=PANEL)
-    time_ax.bar(
-        range(len(dates)), [counts[date] for date in dates],
-        color=["#59625a" if i in (0, len(dates) - 1) else "#aab2a7"
-               for i in range(len(dates))],
-        width=0.72,
-    )
-    time_ax.set_xlim(-0.8, len(dates) - 0.2)
-    middle = len(dates) // 2
-    time_ax.set_xticks([0, middle, len(dates) - 1])
-    time_ax.set_xticklabels([str(dates[0]), str(dates[middle]), str(dates[-1])])
-    time_ax.tick_params(colors=MUTED, labelsize=7, length=0)
-    time_ax.set_ylabel("EVENTS / DAY", color=MUTED, fontsize=7, labelpad=9)
-    time_ax.grid(axis="y", color=GRID, linewidth=0.5)
-    time_ax.set_axisbelow(True)
-    for spine in time_ax.spines.values():
-        spine.set_color("#777f77")
-        spine.set_linewidth(0.65)
+    label(fig, 0.055, 0.071, f"{len(quakes):,}", 31, PAPER, "bold")
+    label(fig, 0.230, 0.076, "EARTHQUAKES\nIN THE SAVED DATA", 8, SILVER,
+          linespacing=1.5)
+    label(fig, 0.515, 0.105, "POSITION  /  LONGITUDE + LATITUDE", 7, PAPER)
+    label(fig, 0.515, 0.083, "DOT SIZE  /  MAGNITUDE", 7, PAPER)
+    label(fig, 0.515, 0.061, "FINE LINES  /  SMOOTHED EVENT DENSITY", 7, PAPER)
+    label(fig, 0.515, 0.039, "LIME RINGS  /  FIVE STRONGEST EVENTS", 7, SIGNAL)
+    label(fig, 0.055, 0.020, "MAP OUTLINES / NATURAL EARTH 1:110M", 6, SILVER)
 
-    fig.text(
-        0.08, 0.072,
-        "POSITION / LONGITUDE + LATITUDE    SIZE / MAGNITUDE    GRAY / DEPTH (KM)    GREEN / 8 STRONGEST",
-        color=TEXT, fontsize=7,
-    )
-    fig.text(
-        0.08, 0.051,
-        "THIN CONTOURS / SMOOTHED, MAGNITUDE-WEIGHTED EVENT DENSITY    •    SOURCE / USGS GEOJSON",
-        color=MUTED, fontsize=7,
-    )
-    OUT.mkdir(exist_ok=True)
-    target = OUT / PICTURE
-    fig.savefig(target, dpi=150, facecolor=BACKGROUND)
-    print(f"saved {target.relative_to(HERE)}")
+    OUT.parent.mkdir(exist_ok=True)
+    fig.savefig(OUT, dpi=150, facecolor=BLACK)
+    print(f"saved {OUT.relative_to(HERE)} from {len(quakes)} earthquakes")
     plt.show()
 
 
