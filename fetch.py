@@ -8,20 +8,16 @@ Fetch the numbers once, save the raw reply to data/, and never fetch again.
 
     uv run fetch.py
 
-Change URL and FILE. The default is the Hong Kong Observatory's daily mean
-temperature for 2026, so the template runs before you have touched it and you
-can see what a file looks like when it arrives. It is an example, not your
-phenomenon: handing it in unchanged is handing in nothing.
+The source is the USGS public feed of magnitude 2.5+ earthquakes from the
+past month. Save its raw GeoJSON reply once so the plot can run offline.
 """
 
 from pathlib import Path
 
 import requests
 
-URL = ("https://data.weather.gov.hk/weatherAPI/opendata/opendata.php"
-       "?dataType=CLMTEMP&rformat=csv&station=HKO&year=2026")      # CHANGE ME
-FILE = "hko-daily-mean-temperature-2026.csv"                          # CHANGE ME: say what it is,
-                                                                      # keep the publisher's extension
+URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_month.geojson"
+FILE = "usgs-earthquakes-2.5-month.geojson"
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 
