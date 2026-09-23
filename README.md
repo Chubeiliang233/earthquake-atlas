@@ -1,34 +1,39 @@
-# The phenomenon
+# Seismic Relief
 
-<!-- This is the SD5913 assignment 2 template. Everything in this file is yours to
-replace, and the check counts words: comments like this one are not words, so
-delete each one as you write. Start with the heading: name the phenomenon.
-
-Then, in this order, at least 150 words in total.
-
-New to folders, paths, or the files here whose names start with a dot? Read
-https://github.com/sd5913/pfad/blob/2026/reference/files.md first. Ten minutes. -->
-
-![what the picture is](out/plot.png)
+![A two-layer wireframe view of earthquake density in the western Pacific](out/earthquake-atlas.png)
 
 ## The phenomenon
 
-<!-- What goes up and down, and why you looked at it. -->
+Earthquakes happen when accumulated stress is released along faults in the Earth's
+crust. Their locations are not evenly distributed: many occur in long belts near
+tectonic plate boundaries. I chose earthquakes because I wanted to see whether
+their spatial pattern could become a field of lines rather than a conventional map
+covered with markers. The western Pacific was especially useful because a large
+number of events form a strong, curved structure across the region.
 
 ## The source
 
-<!-- A link to the page or endpoint the file came from, and one line on what is in
-the file: how many rows, what a row means, what the units are. -->
+The raw file comes from the [USGS past-month feed for earthquakes of magnitude 2.5
+or greater](https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_month.geojson).
+It contains 2,015 GeoJSON features. Each feature represents one recorded earthquake
+and includes longitude and latitude in degrees, depth in kilometres, magnitude, and
+time in milliseconds since the Unix epoch. The downloaded reply is stored unchanged
+in `data/usgs-earthquakes-2.5-month.geojson`, so the drawing runs without internet
+access.
 
 ## What the picture shows
 
-<!-- Two or three sentences. Including what it hides: every transformation throws
-something away, and naming what yours threw away is the easiest way to sound like
-you know what you did. -->
+The picture focuses on 422 events within the western Pacific crop. Earthquakes are
+counted on a geographic grid and smoothed into a density field. In the upper layer,
+local density becomes the height of the white wire surface. The lower layer samples
+the same field as a regular dot matrix, with larger dots in denser areas. The gap
+between layers is only a visual device, and the raised surface is not real terrain.
+The transformation hides exact coastlines, individual event times, depths and most
+magnitudes. It also removes earthquakes outside the selected region and softens
+small local differences through smoothing.
 
 ## Run it
 
 ```
-uv run fetch.py
 uv run plot.py
 ```

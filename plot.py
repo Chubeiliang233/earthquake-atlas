@@ -216,4 +216,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # The earlier collage remains above as a record of a rejected design.
+    # The final command now renders the two-layer density relief.
+    from relief import main as draw_relief
+    draw_relief()
